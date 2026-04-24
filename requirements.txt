@@ -1,0 +1,17 @@
+numpy
+pandas
+seaborn
+neattext
+plotly
+scikit-learn
+joblib
+pytz
+streamlit
+nltk
+streamlit
+faster-whisper
+transformers
+torch
+soundfile
+librosa
+sentencepiece
