@@ -84,10 +84,6 @@ def map_emotion_label(label: str) -> Tuple[str, str]:
     }
     return mapping.get(label.lower(), (label, "❓"))
 
-
-# =========================
-# Transcription
-# =========================
 def transcribe_audio(audio_path: str) -> str:
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -102,11 +98,11 @@ def transcribe_audio(audio_path: str) -> str:
         segments, _ = model.transcribe(
             audio_path,
             beam_size=1,
-            vad_filter=True,
+            vad_filter=False,   # 先关掉
         )
-    except ValueError as e:
+    except Exception as e:
         raise ValueError(
-            "No valid speech was detected. Please record a longer and clearer voice sample."
+            f"Transcription failed: {e}"
         ) from e
 
     texts = [seg.text.strip() for seg in segments if seg.text and seg.text.strip()]
@@ -190,10 +186,13 @@ def show_result(result: dict):
 # =========================
 st.subheader("🎤 Record your voice")
 
-audio_file = st.audio_input(
-    "Record your voice",
-    sample_rate=16000,
+audio_file = st.file_uploader(
+    "Upload an audio file",
+    type=["wav", "mp3"]
 )
+
+if audio_file is not None:
+    st.audio(audio_file)
 
 
 # =========================
