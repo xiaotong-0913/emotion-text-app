@@ -94,27 +94,26 @@ def transcribe_audio(audio_path: str) -> str:
 
     model = load_asr_model()
 
-    try:
-        segments, _ = model.transcribe(
-            audio_path,
-            beam_size=1,
-            vad_filter=False,   # 先关掉
-        )
-    except Exception as e:
-        raise ValueError(
-            f"Transcription failed: {e}"
-        ) from e
+    last_error = None
+    for use_vad in [True, False]:
+        try:
+            segments, _ = model.transcribe(
+                audio_path,
+                beam_size=1,
+                vad_filter=use_vad,
+            )
+            texts = [seg.text.strip() for seg in segments if seg.text and seg.text.strip()]
+            transcript = " ".join(texts).strip()
 
-    texts = [seg.text.strip() for seg in segments if seg.text and seg.text.strip()]
-    transcript = " ".join(texts).strip()
+            if transcript:
+                return transcript
 
-    if not transcript:
-        raise ValueError(
-            "No speech could be transcribed. Please speak more clearly and try again."
-        )
+        except Exception as e:
+            last_error = e
 
-    return transcript
-
+    raise ValueError(
+        "No speech could be transcribed. Please record a longer and clearer voice sample."
+    ) from last_error
 
 # =========================
 # Emotion prediction
