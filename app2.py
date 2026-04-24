@@ -12,7 +12,6 @@ from typing import Dict, Tuple
 import streamlit as st
 from faster_whisper import WhisperModel
 from transformers import pipeline
-from streamlit_mic_recorder import mic_recorder
 
 
 # =========================
@@ -27,7 +26,7 @@ st.set_page_config(
 st.title("🎙️ Voice Emotion Analyzer")
 st.write("Speak into your microphone and detect your emotional state in real time.")
 st.caption("Recording will automatically trigger analysis.")
-st.caption("Please speak clearly for 2–5 seconds after clicking Start Recording.")
+st.caption("Please speak clearly for 2–5 seconds after clicking Record.")
 
 
 # =========================
@@ -191,20 +190,18 @@ def show_result(result: dict):
 # =========================
 st.subheader("🎤 Record your voice")
 
-audio = mic_recorder(
-    start_prompt="Start Recording",
-    stop_prompt="Stop Recording",
-    just_once=True,
-    use_container_width=True,
-    format="wav",
+audio_file = st.audio_input(
+    "Record your voice",
+    sample_rate=16000,
 )
 
 
 # =========================
 # Auto trigger after recording
 # =========================
-if audio and "bytes" in audio:
-    current_hash = hashlib.md5(audio["bytes"]).hexdigest()
+if audio_file is not None:
+    audio_bytes = audio_file.getvalue()
+    current_hash = hashlib.md5(audio_bytes).hexdigest()
 
     if current_hash != st.session_state.last_record_hash:
         st.session_state.last_record_hash = current_hash
@@ -212,14 +209,14 @@ if audio and "bytes" in audio:
         temp_path = None
         try:
             with st.spinner("Analyzing..."):
-                if not audio["bytes"]:
+                if not audio_bytes:
                     raise ValueError("No audio data was recorded.")
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                    tmp.write(audio["bytes"])
+                    tmp.write(audio_bytes)
                     temp_path = tmp.name
 
-                # Very short recordings often fail on cloud
+                # very short recordings often fail
                 if os.path.getsize(temp_path) < 2000:
                     raise ValueError(
                         "The recording is too short. Please speak for at least 2–3 seconds."

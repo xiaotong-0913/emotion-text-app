@@ -9,5 +9,4 @@ safetensors>=0.4.3
 faster-whisper==1.0.3
 soundfile==0.12.1
 sentencepiece==0.2.0
-streamlit-mic-recorder==0.0.8
 huggingface-hub>=0.23.0
