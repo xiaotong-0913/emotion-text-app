@@ -1,6 +1,6 @@
 import os
 
-# 解决 OpenMP 冲突（云端/本地都稳）
+# Reduce OpenMP-related runtime conflicts
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -16,7 +16,7 @@ from streamlit_mic_recorder import mic_recorder
 
 
 # =========================
-# 页面设置
+# Page config
 # =========================
 st.set_page_config(
     page_title="Voice Emotion Analyzer",
@@ -27,10 +27,11 @@ st.set_page_config(
 st.title("🎙️ Voice Emotion Analyzer")
 st.write("Speak into your microphone and detect your emotional state in real time.")
 st.caption("Recording will automatically trigger analysis.")
+st.caption("Please speak clearly for 2–5 seconds after clicking Start Recording.")
 
 
 # =========================
-# Session State
+# Session state
 # =========================
 if "last_record_hash" not in st.session_state:
     st.session_state.last_record_hash = None
@@ -40,7 +41,7 @@ if "last_result" not in st.session_state:
 
 
 # =========================
-# 模型加载
+# Model loading
 # =========================
 @st.cache_resource
 def load_asr_model():
@@ -66,59 +67,81 @@ def load_emotion_pipeline():
 
 
 # =========================
-# Emotion + Emoji
+# Emotion mapping
 # =========================
 def map_emotion_label(label: str) -> Tuple[str, str]:
     mapping = {
         "anger": ("Anger", "😡"),
+        "angry": ("Anger", "😡"),
         "disgust": ("Disgust", "🤢"),
         "fear": ("Fear", "😨"),
         "joy": ("Joy", "😊"),
+        "happy": ("Joy", "😊"),
         "neutral": ("Neutral", "😐"),
         "sadness": ("Sadness", "😢"),
+        "sad": ("Sadness", "😢"),
         "surprise": ("Surprise", "😲"),
         "love": ("Love", "❤️"),
     }
-    key = label.lower()
-    return mapping.get(key, (label, "❓"))
+    return mapping.get(label.lower(), (label, "❓"))
 
 
 # =========================
-# ASR
+# Transcription
 # =========================
 def transcribe_audio(audio_path: str) -> str:
+    if not os.path.exists(audio_path):
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    file_size = os.path.getsize(audio_path)
+    if file_size == 0:
+        raise ValueError("The recorded audio file is empty.")
+
     model = load_asr_model()
 
-    segments, _ = model.transcribe(
-        audio_path,
-        beam_size=1,
-        vad_filter=True,
-    )
+    try:
+        segments, _ = model.transcribe(
+            audio_path,
+            beam_size=1,
+            vad_filter=True,
+        )
+    except ValueError as e:
+        raise ValueError(
+            "No valid speech was detected. Please record a longer and clearer voice sample."
+        ) from e
 
-    texts = [seg.text.strip() for seg in segments if seg.text]
-    return " ".join(texts).strip()
+    texts = [seg.text.strip() for seg in segments if seg.text and seg.text.strip()]
+    transcript = " ".join(texts).strip()
+
+    if not transcript:
+        raise ValueError(
+            "No speech could be transcribed. Please speak more clearly and try again."
+        )
+
+    return transcript
 
 
 # =========================
-# Emotion Prediction
+# Emotion prediction
 # =========================
-def predict_emotion(text: str):
+def predict_emotion(text: str) -> Tuple[str, str, float, Dict[str, float]]:
     clf = load_emotion_pipeline()
     text = text[:500]
     results = clf(text)
 
-    scores = results[0] if isinstance(results[0], list) else results
+    scores = results[0] if len(results) > 0 and isinstance(results[0], list) else results
 
-    score_dict = {}
+    score_dict: Dict[str, float] = {}
     for item in scores:
-        label, emoji = map_emotion_label(item["label"])
-        score_dict[label] = float(item["score"])
+        mapped_label, _ = map_emotion_label(item["label"])
+        score = float(item["score"])
+        score_dict[mapped_label] = max(score_dict.get(mapped_label, 0.0), score)
 
     best_label = max(score_dict, key=score_dict.get)
     best_score = score_dict[best_label]
+    _, best_emoji = map_emotion_label(best_label)
 
-    label, emoji = map_emotion_label(best_label)
-    return label, emoji, best_score, score_dict
+    return best_label, best_emoji, best_score, score_dict
 
 
 # =========================
@@ -126,75 +149,22 @@ def predict_emotion(text: str):
 # =========================
 def generate_feedback(label: str) -> str:
     feedback = {
-        "Joy": "You're feeling positive. Keep it up!",
-        "Neutral": "Emotion is stable. Observe further context.",
-        "Sadness": "You seem down. Consider emotional support.",
-        "Anger": "You may be frustrated. Take a pause.",
-        "Fear": "You may feel anxious. Try to relax.",
-        "Surprise": "Unexpected reaction detected.",
-        "Disgust": "Strong negative reaction detected.",
-        "Love": "Positive emotional attachment detected.",
+        "Joy": "You sound positive and upbeat. Keep it up.",
+        "Neutral": "Your emotion appears stable. More context may help interpret it better.",
+        "Sadness": "You may be feeling low. Consider offering emotional support and patience.",
+        "Anger": "You may sound frustrated or upset. Slowing down and taking a pause may help.",
+        "Fear": "You may sound anxious or uneasy. Try to relax and speak again if needed.",
+        "Surprise": "A surprised emotional response was detected.",
+        "Disgust": "A strong negative reaction was detected.",
+        "Love": "A warm and positive emotional tone was detected.",
     }
-    return feedback.get(label, "Emotion detected.")
+    return feedback.get(label, "An emotion was detected from your voice.")
 
 
 # =========================
-# UI: Recording
+# Result display
 # =========================
-st.subheader("🎤 Record your voice")
-
-audio = mic_recorder(
-    start_prompt="Start Recording",
-    stop_prompt="Stop Recording",
-    just_once=True,
-    use_container_width=True,
-    format="wav",
-)
-
-
-# =========================
-# 自动触发
-# =========================
-if audio and "bytes" in audio:
-    current_hash = hashlib.md5(audio["bytes"]).hexdigest()
-
-    if current_hash != st.session_state.last_record_hash:
-        st.session_state.last_record_hash = current_hash
-
-        try:
-            with st.spinner("Analyzing..."):
-                # 保存音频
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                    tmp.write(audio["bytes"])
-                    temp_path = tmp.name
-
-                # 转写
-                text = transcribe_audio(temp_path)
-
-                # 情绪分析
-                label, emoji, score, score_dict = predict_emotion(text)
-
-                st.session_state.last_result = {
-                    "text": text,
-                    "label": label,
-                    "emoji": emoji,
-                    "score": score,
-                    "scores": score_dict,
-                }
-
-                os.remove(temp_path)
-
-        except Exception as e:
-            st.error(f"Error: {type(e).__name__}")
-            st.code(traceback.format_exc())
-
-
-# =========================
-# 展示结果
-# =========================
-if st.session_state.last_result:
-    result = st.session_state.last_result
-
+def show_result(result: dict):
     st.success("Analysis Complete")
 
     st.subheader("📝 Transcription")
@@ -212,4 +182,74 @@ if st.session_state.last_result:
     sorted_scores = sorted(result["scores"].items(), key=lambda x: x[1], reverse=True)
 
     for label, score in sorted_scores:
-        st.progress(score, text=f"{label}: {score:.2%}")
+        emoji = map_emotion_label(label)[1]
+        st.progress(float(score), text=f"{emoji} {label}: {score:.2%}")
+
+
+# =========================
+# UI
+# =========================
+st.subheader("🎤 Record your voice")
+
+audio = mic_recorder(
+    start_prompt="Start Recording",
+    stop_prompt="Stop Recording",
+    just_once=True,
+    use_container_width=True,
+    format="wav",
+)
+
+
+# =========================
+# Auto trigger after recording
+# =========================
+if audio and "bytes" in audio:
+    current_hash = hashlib.md5(audio["bytes"]).hexdigest()
+
+    if current_hash != st.session_state.last_record_hash:
+        st.session_state.last_record_hash = current_hash
+
+        temp_path = None
+        try:
+            with st.spinner("Analyzing..."):
+                if not audio["bytes"]:
+                    raise ValueError("No audio data was recorded.")
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                    tmp.write(audio["bytes"])
+                    temp_path = tmp.name
+
+                # Very short recordings often fail on cloud
+                if os.path.getsize(temp_path) < 2000:
+                    raise ValueError(
+                        "The recording is too short. Please speak for at least 2–3 seconds."
+                    )
+
+                text = transcribe_audio(temp_path)
+                label, emoji, score, score_dict = predict_emotion(text)
+
+                st.session_state.last_result = {
+                    "text": text,
+                    "label": label,
+                    "emoji": emoji,
+                    "score": score,
+                    "scores": score_dict,
+                }
+
+        except ValueError as e:
+            st.warning(str(e))
+
+        except Exception as e:
+            st.error(f"Error: {type(e).__name__}")
+            st.code(traceback.format_exc())
+
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
+
+# =========================
+# Show latest result
+# =========================
+if st.session_state.last_result is not None:
+    show_result(st.session_state.last_result)
